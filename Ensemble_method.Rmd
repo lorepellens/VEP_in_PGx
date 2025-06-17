@@ -1,0 +1,333 @@
+---
+title: "Ensemble method"
+author: "Lore Pellens"
+date: "2025-06-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r packages, echo=FALSE, warning=FALSE}
+library(VariantAnnotation)
+library(predicts)
+library(tidyverse)
+library(dplyr)
+library(precrec)
+library(readr)
+library(caret)
+library(pROC)
+library(ggplot2)
+library(tidyr)
+library(stringr)
+library(pROC)
+library(ggpubr)
+library(ggcorrplot)
+library(GGally)
+library(randomForest)
+library(caret)
+library(Metrics)
+library(e1071)
+library(nnet)
+library(DMwR2)
+```
+
+# Data
+
+## AlphaMissense
+```{r}
+vcf_file = "output_AlphaMissense.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_AlphaMissense = matrix("", nrow = 1900, ncol = 81)
+colnames(df_AlphaMissense) = csq_fields
+df_AlphaMissense = data.frame(df_AlphaMissense)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_AlphaMissense[i,] = split[[1]]
+}
+
+df_AlphaMissense$rs_number = RS_number
+```
+
+## SIFT
+```{r}
+vcf_file = "output_Ensembl_VEP.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_SIFT = matrix("", nrow = 1900, ncol = length(csq_fields))
+colnames(df_SIFT) = csq_fields
+df_SIFT = data.frame(df_SIFT)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_SIFT[i,] = split[[1]]
+}
+
+df_SIFT$rs_number = RS_number
+
+df_SIFT$SIFT_class = sub("\\(.*", "", df_SIFT$SIFT)
+df_SIFT$value = sub(".*\\((.*)\\)", "\\1", df_SIFT$SIFT)
+```
+
+## PolyPhen-2
+```{r}
+vcf_file = "output_Ensembl_VEP.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_PolyPhen = matrix("", nrow = 1900, ncol = length(csq_fields))
+colnames(df_PolyPhen) = csq_fields
+df_PolyPhen = data.frame(df_PolyPhen)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_PolyPhen[i,] = split[[1]]
+}
+
+df_PolyPhen$rs_number = RS_number
+
+df_PolyPhen$PolyPhen_class = sub("\\(.*", "", df_PolyPhen$PolyPhen)
+df_PolyPhen$value = sub(".*\\((.*)\\)", "\\1", df_PolyPhen$PolyPhen)
+```
+
+## CADD
+```{r}
+vcf_file = "output_CADD.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_CADD = matrix("", nrow = 1900, ncol = length(csq_fields))
+colnames(df_CADD) = csq_fields
+df_CADD = data.frame(df_CADD)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_CADD[i,] = split[[1]]
+}
+
+df_CADD$rs_number = RS_number
+```
+
+```{r}
+rm("csq_raw", "split", "variant", "vcf", "csq_fields", "csq_header", "i", "vcf_file")
+```
+
+# ENSEMBLE METHOD
+```{r}
+data = read.csv("variant_list_function.csv")
+data$PharmVar_function = data$function.
+data = data[-c(7)]
+
+ensemble_data = data.frame("PharmVar_function" = data$PharmVar_function,
+                           "AM_score" = as.numeric(df_AlphaMissense$am_pathogenicity),
+                           "CADD_score" = as.numeric(df_CADD$CADD_RAW),
+                           "PP_score" = as.numeric(df_PolyPhen$value),
+                           "SIFT_score" = as.numeric(df_SIFT$value))
+
+delete_function = c("uncertain function", "unknown function", "function not assigned", NA)
+keep = ifelse(ensemble_data$PharmVar_function %in% delete_function, FALSE, TRUE)
+ensemble_data = ensemble_data[keep,]
+ensemble_data$PharmVar_function = factor(ensemble_data$PharmVar_function,
+                    levels = c("no function", "decreased function", "normal function"))
+```
+
+## Score transformation and standardisation
+```{r}
+ensemble_data$inverted_SIFT_score = 1 - ensemble_data$SIFT_score # deleterious is low score so take inverse
+ensemble_data = ensemble_data %>% mutate(
+      AM_scaled = scale(AM_score)[,1],
+      CADD_scaled = scale(CADD_score)[,1],
+      PolyPhen2_scaled = scale(PP_score)[,1],
+      SIFT_scaled = scale(SIFT_score)[,1],
+      SIFT_inverted_scaled = scale(inverted_SIFT_score)[,1]
+)
+ensemble_data = na.omit(ensemble_data)
+```
+
+## Split data in training and test data
+```{r}
+no_func = ensemble_data %>% filter(PharmVar_function == "no function")
+dec_func = ensemble_data %>% filter(PharmVar_function == "decreased function")
+norm_func = ensemble_data %>% filter(PharmVar_function == "normal function")
+
+set.seed(123)
+train_no_func = sample(c(1:dim(no_func)[1]), dim(no_func)[1]*3/4)
+set.seed(123)
+train_dec_func = sample(c(1:dim(dec_func)[1]), dim(dec_func)[1]*3/4)
+set.seed(123)
+train_norm_func = sample(c(1:dim(norm_func)[1]), dim(norm_func)[1]*3/4)
+
+data_train = rbind(no_func[train_no_func,], dec_func[train_dec_func,],
+                   norm_func[train_norm_func,])
+data_test = rbind(no_func[-train_no_func,], dec_func[-train_dec_func,],
+                   norm_func[-train_norm_func,])
+```
+
+## Logistic regression
+```{r}
+
+log_reg = multinom(data = data_train,
+                   formula = PharmVar_function ~ AM_scaled + CADD_scaled +
+                     PolyPhen2_scaled + SIFT_inverted_scaled)
+
+predicted = predict(log_reg, data_test, type = "class")
+probs = predict(log_reg, data_test, type = "prob")
+mean_acc_log_reg = sum(as.character(predicted) == as.character(data_test$PharmVar_function)) / length(predicted)
+  
+table_log_reg = table(predicted, data_test$PharmVar_function)
+con = confusionMatrix(table_log_reg)
+cm = table(Predicted = predicted, Actual = data_test$PharmVar_function)
+cm_df = as.data.frame(cm)
+
+recall = mean(diag(cm) / rowSums(cm)) 
+precision = mean(diag(cm) / colSums(cm))
+f1 = 2*recall*precision/(recall+precision)
+  
+binary_labels_no_func = as.numeric(data_test$PharmVar_function == "no function")
+roc_obj_no_func = roc(binary_labels_no_func, probs[,1])
+
+binary_labels_dec_func = as.numeric(data_test$PharmVar_function == "decreased function")
+roc_obj_dec_func = roc(binary_labels_dec_func, probs[,2])
+
+binary_labels_norm_func = as.numeric(data_test$PharmVar_function == "normal function")
+roc_obj_norm_func = roc(binary_labels_norm_func, probs[,3])
+
+roc_list = list("No function" = roc_obj_no_func,
+                "Decreased function" = roc_obj_dec_func, "Normal function" = roc_obj_norm_func)
+
+p_log_reg = ggroc(roc_list) + geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "gray") + theme_bw() + labs(col = "") +
+  ggtitle("Multinomial Logistic Regression")
+```
+
+## Random forest
+```{r}
+set.seed(123)
+tuned_model = tune.randomForest(PharmVar_function~AM_scaled + CADD_scaled + SIFT_inverted_scaled + PolyPhen2_scaled, data = data_train,
+                     mtry = 1:4, ntree = seq(250,1000, 250),
+                     nodesize = 1:10, tunecontrol = tune.control(sampling = "cross", cross = 5))  # 5-fold CV
+
+set.seed(123)
+model = randomForest(PharmVar_function~AM_scaled + CADD_scaled +
+                     PolyPhen2_scaled + SIFT_inverted_scaled, data = data_train,
+                     ntree = 750, mtry=1, nodesize = 9)
+predicted = predict(model, data_test, type = "class")
+probs = predict(model, data_test, type = "prob")
+mean_acc = sum(as.character(predicted) == as.character(data_test$PharmVar_function)) / length(predicted) # 33.33%
+  
+cm = table(Predicted = predicted, Actual = data_test$PharmVar_function)
+  
+mean_recall = mean(diag(cm) / rowSums(cm)) # for each class separately
+mean_precision = mean(diag(cm) / colSums(cm))
+mean_f1 = 2*mean_recall*mean_precision/
+    (mean_recall+mean_precision)
+  
+binary_labels_no_func = as.numeric(data_test$PharmVar_function == "no function")
+roc_obj_no_func = roc(binary_labels_no_func, probs[,1])
+
+binary_labels_dec_func = as.numeric(data_test$PharmVar_function == "decreased function")
+roc_obj_dec_func = roc(binary_labels_dec_func, probs[,2])
+
+binary_labels_norm_func = as.numeric(data_test$PharmVar_function == "normal function")
+roc_obj_norm_func = roc(binary_labels_norm_func, probs[,3])
+
+roc_list = list("No function" = roc_obj_no_func,
+                "Decreased function" = roc_obj_dec_func, "Normal function" = roc_obj_norm_func)
+
+p_rf = ggroc(roc_list) + geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "gray") + theme_bw() + labs(col = "") +
+  ggtitle("Random forest")
+```
+
+## Support Vector Machine
+```{r}
+# Define the parameter grid for cost (C)
+cost_values = 2^(-5:5)  # try a range of cost values
+gamma_values = 2^(-5:5)
+
+# Perform tuning with cross-validation
+set.seed(123)
+tuned_model = tune(svm, PharmVar_function~AM_scaled + CADD_scaled +
+                     PolyPhen2_scaled + SIFT_inverted_scaled, data = data_train,
+                    kernel = "radial",
+                    ranges = list(cost = cost_values, gamma = gamma_values),
+                    tunecontrol = tune.control(sampling = "cross", cross = 5))  # 5-fold CV
+
+set.seed(123)
+svm_model = svm(PharmVar_function~AM_scaled + CADD_scaled +
+                     PolyPhen2_scaled + SIFT_inverted_scaled, data = data_train, kernel = "radial", cost = 32, gamma = 0.0625, probability = TRUE)
+
+predictions_svm = predict(svm_model, data_test, type = "class")
+acc_svm = sum(predictions_svm == data_test$PharmVar_function)/length(predictions_svm) #37.18
+probs_svm = attr(predict(svm_model, data_test, probability = TRUE), "probabilities") 
+
+table_svm = table(predictions_svm, data_test$PharmVar_function)
+con = confusionMatrix(table_svm)
+
+cm = table(Predicted = predictions_svm, Actual = data_test$PharmVar_function)
+cm_df = as.data.frame(cm)
+
+recall = mean(diag(cm) / rowSums(cm)) # for each class separately
+precision = mean(diag(cm) / colSums(cm))
+f1 = 2*recall*precision/(recall+precision)
+
+binary_labels_no_func = as.numeric(data_test$PharmVar_function == "no function")
+roc_obj_no_func = roc(binary_labels_no_func, probs_svm[,1])
+
+binary_labels_dec_func = as.numeric(data_test$PharmVar_function == "decreased function")
+roc_obj_dec_func = roc(binary_labels_dec_func, probs_svm[,2])
+
+binary_labels_norm_func = as.numeric(data_test$PharmVar_function == "normal function")
+roc_obj_norm_func = roc(binary_labels_norm_func, probs_svm[,3])
+
+roc_list = list("No function" = roc_obj_no_func,
+                "Decreased function" = roc_obj_dec_func, "Normal function" = roc_obj_norm_func)
+
+p_svm = ggroc(roc_list) + geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "gray") + theme_bw() + labs(col = "") +
+  ggtitle("Support Vector Machine")
+
+saveRDS(svm_model,"svm_model.RDS")
+```
+
+```{r}
+ggarrange(p_log_reg, p_rf, p_svm, ncol = 3, legend = "bottom", common.legend = TRUE)
+```
