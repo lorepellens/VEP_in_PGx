@@ -1,0 +1,115 @@
+---
+title: "DataDescription"
+author: "Lore Pellens"
+date: "2025-05-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r}
+library(biomaRt)
+library(httr)
+library(dplyr)
+library(jsonlite)
+library(VariantAnnotation)
+library(stringr)
+library(ggplot2)
+library(RColorBrewer)
+```
+
+# Load data
+```{r}
+vcf <- readVcf("output_AlphaMissense.vcf", genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_AlphaMissense = matrix("", nrow = 1900, ncol = 81)
+colnames(df_AlphaMissense) = csq_fields
+df_AlphaMissense = data.frame(df_AlphaMissense)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_AlphaMissense[i,] = split[[1]]
+}
+
+data = read.csv("variant_list_with_gene_and_allele.csv")
+data_pharm_var = read.csv("variant_list_function.csv")
+keep = ifelse(data$rs_id %in% data_pharm_var$rs_id, TRUE, FALSE)
+data = data[keep,]
+keep = ifelse(data$variant_id %in% data_pharm_var$variant_id, TRUE, FALSE)
+data = data[keep,]
+
+allele_nr = c(1:1900)
+
+for (i in 1:1900){
+  allele_nr[i] = unlist(strsplit(data$allele[i],"\\*"))[2]
+}
+allele_nr = unlist(allele_nr)
+data$allele_nr = allele_nr
+```
+
+# Genes
+```{r}
+group_by_gene_variant = data %>% group_by(gene) %>% summarise("count" = n()) %>%
+  mutate(percentage = round(count/sum(count)*100,2)) %>% arrange(gene)
+                       
+p = ggplot(group_by_gene_variant, aes(x = reorder(gene, -count), y = count)) +
+  geom_bar(position='dodge', stat='identity', col = "coral2", fill = "coral2") + theme_bw() + ylab("Number of variants") + labs(fill = "") +
+  xlab("Gene") + theme(axis.text.x = element_text(angle = 90, size = 10),
+                              axis.title.x = element_text(size = 18),
+                              axis.title.y = element_text(size = 18),
+                              axis.text.y = element_text(size = 12)) 
+
+```
+
+# Variant types
+```{r}
+group_by_consequence_gene = df_AlphaMissense %>% group_by(SYMBOL,Consequence) %>%
+                        summarise("Count" = n()) %>%
+                        mutate(Percentage = round(Count / sum(Count) * 100,2))
+
+group_by_consequence_gene$cons2 = group_by_consequence_gene$Consequence
+
+group_by_consequence_gene$Consequence = as.factor(group_by_consequence_gene$Consequence)
+
+
+levels(group_by_consequence_gene$Consequence) = rep(c("3 prime UTR variant", "frameshift variant",
+                                          "inframe insertion",
+                                          "inframe insertion &\nsplice region variant",
+                                          "intron variant", "missense variant",
+                                          "missense variant &\nsplice region variant",
+                                          "splice acceptor variant", "splice donor variant",
+                                          "start lost", "stop gained",
+                                          "stop gained &\nsplice region variant",
+                                          "stop lost", "synonymous variant",
+                                          "upstream gene variant", NA), times = 15)
+group_by_consequence_gene = na.omit(group_by_consequence_gene)
+
+mycolors = c(brewer.pal(name="Set2", n = 8), brewer.pal(name="Pastel2", n = 7))
+
+ggplot(group_by_consequence_gene, aes(x = reorder(SYMBOL, -Count), y = Count, fill = Consequence)) +
+  geom_bar(stat = "identity") + theme_bw() + ylab("Number of variants") +
+  xlab("Gene") + labs(fill = "Variant type") + theme(axis.text.x = element_text(angle = 90, size = 12),
+                              axis.title.x = element_text(size = 18),
+                              axis.title.y = element_text(size = 18),
+                              axis.text.y = element_text( size = 12)) +
+  scale_fill_manual(values=mycolors)
+```
+
+# PharmVar
+```{r}
+table(data_pharm_var$function.)
+```
+
