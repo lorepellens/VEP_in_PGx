@@ -1,0 +1,36 @@
+---
+title: "PGx summary"
+author: "Lore Pellens"
+date: "`r Sys.Date()`"
+output: html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r packages, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(VariantAnnotation)
+```
+
+```{r load data, include=FALSE}
+args <- commandArgs(trailingOnly = TRUE)
+input_file <- args[1]
+output_file <- args[2]
+data = read.csv(input_file)
+```
+
+## Types of variants
+```{r plot types of variants}
+
+```
+
+## Summary ensemble method
+```{r plot types of variants}
+
+```
