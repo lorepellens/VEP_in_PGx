@@ -1,0 +1,411 @@
+---
+title: "Variant effect predictors"
+author: "Lore Pellens"
+date: "2025-06-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r packages, echo=FALSE, warning=FALSE}
+library(VariantAnnotation)
+library(predicts)
+library(tidyverse)
+library(dplyr)
+library(precrec)
+library(readr)
+library(caret)
+library(pROC)
+library(ggplot2)
+library(tidyr)
+library(stringr)
+library(pROC)
+library(ggpubr)
+library(ggcorrplot)
+library(GGally)
+library(randomForest)
+library(caret)
+library(Metrics)
+library(e1071)
+library(nnet)
+library(DMwR2)
+```
+
+# Data
+
+## AlphaMissense
+```{r}
+vcf_file = "output_AlphaMissense.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_AlphaMissense = matrix("", nrow = 1900, ncol = 81)
+colnames(df_AlphaMissense) = csq_fields
+df_AlphaMissense = data.frame(df_AlphaMissense)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_AlphaMissense[i,] = split[[1]]
+}
+
+df_AlphaMissense$rs_number = RS_number
+```
+
+## SIFT
+```{r}
+vcf_file = "output_Ensembl_VEP.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_SIFT = matrix("", nrow = 1900, ncol = length(csq_fields))
+colnames(df_SIFT) = csq_fields
+df_SIFT = data.frame(df_SIFT)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_SIFT[i,] = split[[1]]
+}
+
+df_SIFT$rs_number = RS_number
+
+df_SIFT$SIFT_class = sub("\\(.*", "", df_SIFT$SIFT)
+df_SIFT$value = sub(".*\\((.*)\\)", "\\1", df_SIFT$SIFT)
+```
+
+## PolyPhen-2
+```{r}
+vcf_file = "output_Ensembl_VEP.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_PolyPhen = matrix("", nrow = 1900, ncol = length(csq_fields))
+colnames(df_PolyPhen) = csq_fields
+df_PolyPhen = data.frame(df_PolyPhen)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_PolyPhen[i,] = split[[1]]
+}
+
+df_PolyPhen$rs_number = RS_number
+
+df_PolyPhen$PolyPhen_class = sub("\\(.*", "", df_PolyPhen$PolyPhen)
+df_PolyPhen$value = sub(".*\\((.*)\\)", "\\1", df_PolyPhen$PolyPhen)
+```
+
+## CADD
+```{r}
+vcf_file = "output_CADD.vcf"
+vcf = readVcf(vcf_file, genome = "GRCh38")
+
+RS_number = vcf@rowRanges@ranges@NAMES
+
+csq_raw = info(vcf)$CSQ
+
+csq_header = info(header(vcf))["CSQ", "Description"]
+csq_fields = str_match(csq_header, "Format: (.+)")[,2] %>% 
+  str_split("\\|") %>% 
+  unlist()
+
+df_CADD = matrix("", nrow = 1900, ncol = length(csq_fields))
+colnames(df_CADD) = csq_fields
+df_CADD = data.frame(df_CADD)
+
+for (i in 1:length(vcf)){
+  variant = vcf@info$CSQ[i]
+  split = str_split(variant@unlistData[1], "\\|")
+  df_CADD[i,] = split[[1]]
+}
+
+df_CADD$rs_number = RS_number
+```
+
+```{r}
+rm("csq_raw", "split", "variant", "vcf", "csq_fields", "csq_header", "i", "vcf_file")
+```
+
+# Compare with PharmVar
+```{r}
+data = read.csv("variant_list_function.csv")
+data$PharmVar_function = data$function.
+data = data[-c(7)]
+
+data_boxplots = data.frame("PharmVar_function" = data$PharmVar_function,
+                           "AM_score" = as.numeric(df_AlphaMissense$am_pathogenicity),
+                           "CADD_score" = as.numeric(df_CADD$CADD_RAW),
+                           "PP_score" = as.numeric(df_PolyPhen$value),
+                           "SIFT_score" = as.numeric(df_SIFT$value))
+
+delete_function = c("uncertain function", "unknown function", "function not assigned", NA)
+keep = ifelse(data_boxplots$PharmVar_function %in% delete_function, FALSE, TRUE)
+data_boxplots = data_boxplots[keep,]
+data_boxplots$PharmVar_function = factor(data_boxplots$PharmVar_function,
+                    levels = c("no function", "decreased function", "normal function", "increased function"))
+```
+
+## AlphaMissense
+```{r}
+d_AM = ggplot(data = data_boxplots) +
+  geom_density(aes(x = AM_score, col = PharmVar_function)) +
+  theme_bw() + xlab("AlphaMissense score") +
+  labs(col = "PharmVar function") 
+
+p_AM = ggplot(data = data_boxplots) +
+  geom_boxplot(aes(x = PharmVar_function, y = AM_score, col = PharmVar_function)) +
+  theme_bw() +
+  xlab("PharmVar function") +
+  ylab("AlphaMissense score") +
+  labs(col = "PharmVar function") +
+  scale_x_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function")) +
+  scale_color_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function"))
+```
+
+## SIFT
+```{r}
+d_SIFT = ggplot(data = data_boxplots) +
+  geom_density(aes(x = SIFT_score, col = PharmVar_function)) + ylim(c(0,10)) + 
+  theme_bw() + xlab("SIFT score") +
+  labs(col = "PharmVar function") 
+
+p_SIFT = ggplot(data = data_boxplots) +
+  geom_boxplot(aes(x = PharmVar_function, y = SIFT_score, col = PharmVar_function)) +
+  theme_bw() +
+  xlab("PharmVar function") +
+  ylab("SIFT score") +
+  labs(col = "PharmVar function") +
+  scale_x_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function")) +
+  scale_color_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function"))
+```
+
+## Polyphen
+```{r}
+d_PP = ggplot(data = data_boxplots) +
+  geom_density(aes(x = PP_score, col = PharmVar_function)) +
+  theme_bw() + xlab("PolyPhen-2 score") +
+  labs(col = "PharmVar function") 
+
+p_PP = ggplot(data = data_boxplots) +
+  geom_boxplot(aes(x = PharmVar_function, y = PP_score, col = PharmVar_function)) +
+  theme_bw() +
+  xlab("PharmVar function") +
+  ylab("PolyPhen-2 score") +
+  labs(col = "PharmVar function") +
+  scale_x_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function")) +
+  scale_color_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function"))
+```
+
+## CADD
+```{r}
+d_CADD = ggplot(data = data_boxplots) +
+  geom_density(aes(x = CADD_score, col = PharmVar_function)) +
+  theme_bw() + xlab("CADD score") +
+  labs(col = "PharmVar function") 
+
+p_CADD = ggplot(data = data_boxplots) +
+  geom_boxplot(aes(x = PharmVar_function, y = CADD_score, col = PharmVar_function)) +
+  theme_bw() +
+  xlab("PharmVar function") +
+  ylab("CADD score") +
+  labs(col = "PharmVar function") +
+  scale_x_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function")) +
+  scale_color_discrete(labels = c("No function", "Decreased Function", "Normal function", "Increased function"))
+```
+
+## Combine plots
+```{r}
+ggarrange(d_AM, d_CADD, d_PP, d_SIFT, common.legend = TRUE)
+```
+
+```{r}
+ggarrange(p_AM, p_CADD, p_PP, p_SIFT, common.legend = TRUE, legend = "none")
+```
+
+```{r}
+ggarrange(p_AM2, p_CADD2, p_PP2, p_SIFT2, common.legend = TRUE, legend = "none")
+```
+
+```{r}
+data_boxplots %>% group_by(PharmVar_function) %>% summarise(M = median(AM_score, na.rm = TRUE), SD = sd(AM_score, na.rm = TRUE))
+
+data_boxplots %>% group_by(PharmVar_function) %>% summarise(M = median(CADD_score, na.rm = TRUE), SD = sd(CADD_score, na.rm = TRUE))
+
+data_boxplots %>% group_by(PharmVar_function) %>% summarise(M = median(PP_score, na.rm = TRUE), SD = sd(PP_score, na.rm = TRUE))
+
+data_boxplots %>% group_by(PharmVar_function) %>% summarise(M = median(SIFT_score, na.rm = TRUE), SD = sd(SIFT_score, na.rm = TRUE))
+```
+
+
+# ROC curves and AUC
+## Data
+```{r}
+normal_no_function = data_boxplots %>%
+  filter(PharmVar_function %in% c("no function", "normal function")) 
+normal_decreased = data_boxplots %>%
+  filter(PharmVar_function %in% c("decreased function", "normal function")) 
+normal_increased = data_boxplots %>%
+  filter(PharmVar_function %in% c("increased function", "normal function")) 
+```
+
+## Normal vs. no function 
+### AlphaMissense
+```{r}
+roc_AM = roc(normal_no_function$PharmVar_function, normal_no_function$AM_score,
+             levels = c("normal function", "no function"))
+cat("\nAUC for AM (normal vs. no function)", pROC::auc(roc_AM), "\n")
+p_AM = ggroc(roc_AM, col = "blue") + theme_bw() +
+  ggtitle(paste0("AlphaMissense ROC Curve (AUC = ", round(pROC::auc(roc_AM),2),")"))
+```
+
+### SIFT
+```{r}
+roc_SIFT = roc(normal_no_function$PharmVar_function, normal_no_function$SIFT_score,
+             levels = c("normal function", "no function"))
+cat("\nAUC for SIFT (normal vs. no function)", pROC::auc(roc_SIFT), "\n")
+p_SIFT = ggroc(roc_SIFT, col = "blue") + theme_bw() +
+  ggtitle(paste0("SIFT ROC Curve (AUC = ", round(pROC::auc(roc_SIFT),2),")"))
+```
+
+### PolyPhen
+```{r}
+roc_PP = roc(normal_no_function$PharmVar_function, normal_no_function$PP_score,
+             levels = c("normal function", "no function"))
+cat("\nAUC for PP (normal vs. no function)", pROC::auc(roc_PP), "\n")
+p_PP = ggroc(roc_PP, col = "blue") + theme_bw() +
+  ggtitle(paste0("PolyPhen ROC Curve (AUC = ", round(pROC::auc(roc_PP),2),")"))
+```
+
+### CADD
+```{r}
+roc_CADD = roc(normal_no_function$PharmVar_function, normal_no_function$CADD_score,
+             levels = c("normal function", "no function"))
+cat("\nAUC for CADD (normal vs. no function)", pROC::auc(roc_CADD), "\n")
+p_CADD = ggroc(roc_CADD, col = "blue") + theme_bw() +
+  ggtitle(paste0("CADD ROC Curve (AUC = ", round(pROC::auc(roc_CADD),2),")"))
+```
+
+### Combine plots
+```{r}
+plot = ggarrange(p_AM, p_CADD, p_PP, p_SIFT)
+annotate_figure(plot, top = text_grob("Normal function vs. no function", size = 20))
+```
+
+## Normal vs. decreased function 
+### AlphaMissense
+```{r}
+roc_AM = roc(normal_decreased$PharmVar_function, normal_decreased$AM_score,
+             levels = c("normal function", "decreased function"))
+cat("\nAUC for AM (normal vs. decreased function)", pROC::auc(roc_AM), "\n")
+p_AM = ggroc(roc_AM, col = "blue") + theme_bw() +
+  ggtitle(paste0("AlphaMissense ROC Curve (AUC = ", round(pROC::auc(roc_AM),2),")"))
+```
+
+### SIFT
+```{r}
+roc_SIFT = roc(normal_decreased$PharmVar_function, normal_decreased$SIFT_score,
+             levels = c("normal function", "decreased function"))
+cat("\nAUC for SIFT (normal vs. decreased function)", pROC::auc(roc_SIFT), "\n")
+p_SIFT = ggroc(roc_SIFT, col = "blue") + theme_bw() +
+  ggtitle(paste0("SIFT ROC Curve (AUC = ", round(pROC::auc(roc_SIFT),2),")"))
+```
+
+### PolyPhen
+```{r}
+roc_PP = roc(normal_decreased$PharmVar_function, normal_decreased$PP_score,
+             levels = c("normal function", "decreased function"))
+cat("\nAUC for PP (normal vs. decreased function)", pROC::auc(roc_PP), "\n")
+p_PP = ggroc(roc_PP, col = "blue") + theme_bw() +
+  ggtitle(paste0("PolyPhen ROC Curve (AUC = ", round(pROC::auc(roc_PP),2),")"))
+```
+
+### CADD
+```{r}
+roc_CADD = roc(normal_decreased$PharmVar_function, normal_decreased$CADD_score,
+             levels = c("normal function", "decreased function"))
+cat("\nAUC for CADD (normal vs. decreased function)", pROC::auc(roc_CADD), "\n")
+p_CADD = ggroc(roc_CADD, col = "blue") + theme_bw() +
+  ggtitle(paste0("CADD ROC Curve (AUC = ", round(pROC::auc(roc_CADD),2),")"))
+```
+
+### Combine plots
+```{r}
+plot = ggarrange(p_AM, p_CADD, p_PP, p_SIFT)
+annotate_figure(plot, top = text_grob("Normal function vs. decreased function", size = 20))
+```
+
+## Normal vs. increased function 
+### AlphaMissense
+```{r}
+roc_AM = roc(normal_increased$PharmVar_function, normal_increased$AM_score,
+             levels = c("normal function", "increased function"))
+cat("\nAUC for AM (normal vs. increased function)", pROC::auc(roc_AM), "\n")
+p_AM = ggroc(roc_AM, col = "blue") + theme_bw() +
+  ggtitle(paste0("AlphaMissense ROC Curve (AUC = ", round(pROC::auc(roc_AM),2),")"))
+```
+
+### SIFT
+```{r}
+roc_SIFT = roc(normal_increased$PharmVar_function, normal_increased$SIFT_score,
+             levels = c("normal function", "increased function"))
+cat("\nAUC for SIFT (normal vs. increased function)", pROC::auc(roc_SIFT), "\n")
+p_SIFT = ggroc(roc_SIFT, col = "blue") + theme_bw() +
+  ggtitle(paste0("SIFT ROC Curve (AUC = ", round(pROC::auc(roc_SIFT),2),")"))
+```
+
+### PolyPhen
+```{r}
+roc_PP = roc(normal_increased$PharmVar_function, normal_increased$PP_score,
+             levels = c("normal function", "increased function"))
+cat("\nAUC for PP (normal vs. increased function)", pROC::auc(roc_PP), "\n")
+p_PP = ggroc(roc_PP, col = "blue") + theme_bw() +
+  ggtitle(paste0("PolyPhen ROC Curve (AUC = ", round(pROC::auc(roc_PP),2),")"))
+```
+
+### CADD
+```{r}
+roc_CADD = roc(normal_increased$PharmVar_function, normal_increased$CADD_score,
+             levels = c("normal function", "increased function"))
+cat("\nAUC for CADD (normal vs. increased function)", pROC::auc(roc_CADD), "\n")
+p_CADD = ggroc(roc_CADD, col = "blue") + theme_bw() +
+  ggtitle(paste0("CADD ROC Curve (AUC = ", round(pROC::auc(roc_CADD),2),")"))
+```
+
+### Combine plots
+```{r}
+plot = ggarrange(p_AM, p_CADD, p_PP, p_SIFT)
+annotate_figure(plot, top = text_grob("Normal function vs. increased function", size = 20))
+```
+
+# Spearman Correlation
+```{r, warning=FALSE, message=FALSE}
+ggpairs(corr_data, columnLabels = c("AlphaMissense", "CADD", "PolyPhen", "SIFT"), upper = list(continuous = wrap("cor", method = "spearman", stars = FALSE))) + theme_bw()
+```
